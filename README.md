@@ -16,9 +16,8 @@ use text_to_png::TextRenderer;
 let renderer = TextRenderer::default();
 
 let text_png = renderer.render_text_to_png_data("Rénder this, brö", 64, "Dark Turquoise");
-
 ```
 
-Writing `text_png.data` to a file yields
+Writing the `&[u8]` data returned in `text_png.data` to a `text.png` yields:
 
-[Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png)
+![Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png?raw=true)

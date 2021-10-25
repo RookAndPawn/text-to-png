@@ -28,10 +28,9 @@
 //!
 //! ARGS:
 //!     <text>...    All trailing arguments will be treated as the text to render
-//!
 //! ```
 //!
-//! To render a file to disk, run:
+//! To render text into a png file, run:
 //!
 //! ```console
 //! kguthrie@home text-to-png % ./txt2png -o text.png -c DarkTurquoise -s 64 Rénder this, brö
@@ -39,7 +38,7 @@
 //!
 //! And you'll get
 //!
-//! [Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png)
+//! ![Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png?raw=true)
 //!
 #![warn(
     missing_docs,
