@@ -15,7 +15,7 @@ name = "txt2png"
 path = "src/bin.rs"
 
 [dependencies]
-text-to-png = { path = "../text-to-png" }
+text-to-png = { version = "0.1.0", path = "../text-to-png" }
 eyre = "0.6.5"
 clap = "2.33.3"
 thiserror = "1.0.30"
