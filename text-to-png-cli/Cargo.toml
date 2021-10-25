@@ -1,0 +1,21 @@
+[package]
+name = "text-to-png-cli"
+version = "0.1.0"
+edition = "2018"
+authors = ["Kevin Guthrie <kevin.guthrie@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A command-line tool to render text to a png image with basic options"
+readme = "README.md"
+repository = "https://github.com/RookAndPawn/text-to-png"
+keywords = ["text", "font", "rendering", "png", "svg", "cli", "terminal"]
+categories = ["visualization", "command-line-utilities", "text-processing", "encoding"]
+
+[[bin]]
+name = "txt2png"
+path = "src/bin.rs"
+
+[dependencies]
+text-to-png = { path = "../text-to-png" }
+eyre = "0.6.5"
+clap = "2.33.3"
+thiserror = "1.0.30"
