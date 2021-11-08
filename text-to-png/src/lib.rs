@@ -1,27 +1,4 @@
-//! # Text To Png
-//!
-//! This crate provides a really simple interface for rendering basic text to a png image.
-//!
-//! ## Features
-//! - 100% Rust! We use [usvg](https://crates.io/crates/usvg) for path vectoring, [resvg](https://crates.io/crates/resvg) for rasterizing, and [tiny-skia](https://crates.io/crates/tiny-skia) for png conversion
-//! - Built-in, monospace font courtesy of [Ryoichi Tsunekawa](https://dharmatype.com/)
-//! - Flexible color specification, `"Aquamarine"`, `"#4506AE"`, `"EEE"`, `0`
-//! - Text baseline height is provided for alignment consistency
-//!
-//! ## Example
-//!
-//! ```rust
-//! use text_to_png::TextRenderer;
-//!
-//! let renderer = TextRenderer::default();
-//!
-//! let text_png = renderer.render_text_to_png_data("Rénder this, brö", 64, "Dark Turquoise");
-//! ```
-//!
-//! Writing the `&[u8]` data returned in `text_png.data` to a `text.png` yields:
-//!
-//! ![Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png?raw=true)
-//!
+#![doc = include_str!("../../README.md")]
 #![warn(
     missing_docs,
     rust_2018_idioms,
@@ -31,6 +8,7 @@
 
 mod colors;
 
+use derive_new::new;
 use fontdb::Database;
 use resvg::render_node;
 use std::{
@@ -55,12 +33,6 @@ fn create_default_font_db() -> Database {
     let mut result = Database::new();
 
     result.load_font_data(DEFAULT_FONT.to_vec());
-
-    result.set_cursive_family(DEFAULT_FONT_NAME);
-    result.set_fantasy_family(DEFAULT_FONT_NAME);
-    result.set_monospace_family(DEFAULT_FONT_NAME);
-    result.set_sans_serif_family(DEFAULT_FONT_NAME);
-    result.set_serif_family(DEFAULT_FONT_NAME);
 
     result
 }
@@ -91,7 +63,7 @@ fn parse_color_value(slice: &[u8]) -> Option<u8> {
 }
 
 /// Representation of the size of png image
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default, new)]
 pub struct Size {
     /// Image width in pixels
     pub width: u32,
@@ -110,7 +82,7 @@ impl From<PathBbox> for Size {
 }
 
 /// Representation of a RGB color
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default, derive_new::new)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default, new)]
 pub struct Color {
     /// Red Component
     pub r: u8,
@@ -138,11 +110,30 @@ pub struct TextPng {
 
 /// Error type returned on unsuccessful rendering calls
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum TextToPngError {
     /// Error case when the color string given is not parsable into a valid
     /// color
     #[error("Couldn't create color from input")]
     InvalidColor,
+
+    /// Error indicating the given font size was invalid
+    #[error("Invalid font size - {0}")]
+    InvalidFontSize(u32),
+
+    /// Error indicating the font data given did not contain a valid font
+    #[error("No font was loaded from the given font data")]
+    NoFontFound,
+
+    /// Indicates an error with the inputs, but we can't pin down what it was
+    #[error("There was an unknown error with the input")]
+    InvalidInput,
+
+    /// Error indicating the memory for the rendered text couldn't be allocated.
+    /// Note. This won't happen until memory allocation is fallible ala
+    /// <https://github.com/rust-lang/rust/issues/48043>
+    #[error("There was an error allocating the storage for the rendered text")]
+    CouldNotCreateImageStorage,
 
     /// Error case to handle failures form usvg
     #[error("Failed to construct vectors for text - {0}")]
@@ -247,7 +238,7 @@ impl TextRenderer {
     /// only the default font
     pub fn new() -> Self {
         let options = Options {
-            //font_family: "monospace".into(),
+            font_family: DEFAULT_FONT_NAME.into(),
             fontdb: DEFAULT_FONT_DB.clone(),
             text_rendering: TextRendering::OptimizeLegibility,
             ..Options::default()
@@ -258,8 +249,41 @@ impl TextRenderer {
         }
     }
 
+    /// Attempt to create a new text renderer that uses the given font instead
+    /// of the built-in font. If the given font data is not processable as a
+    /// true-type font or true-type collection, then none `None` will be
+    /// returned. Note: if the given data is a true-type collection, then the
+    /// face with the default style will be used
+    pub fn try_new_with_ttf_font_data<D>(
+        ttf_font_data: D,
+    ) -> Result<Self, TextToPngError>
+    where
+        D: AsRef<[u8]>,
+    {
+        let mut fonts = Database::new();
+
+        fonts.load_font_data(ttf_font_data.as_ref().to_vec());
+
+        fonts
+            .faces()
+            .first()
+            .map(|face| face.family.clone())
+            .map(move |family| Options {
+                fontdb: fonts,
+                text_rendering: TextRendering::OptimizeLegibility,
+                font_family: family,
+                ..Options::default()
+            })
+            .map(|options| TextRenderer {
+                render_options: options,
+            })
+            .ok_or(TextToPngError::NoFontFound)
+    }
+
     /// Render the given text to a png with the given options.
     /// ```
+    /// use text_to_png::TextRenderer;
+    ///
     /// let renderer = TextRenderer::default();
     /// let text_png = renderer
     ///     .render_text_to_png_data(
@@ -278,6 +302,10 @@ impl TextRenderer {
         T: AsRef<str>,
         C: TryInto<Color>,
     {
+        if font_size_pixels == 0 {
+            return Err(TextToPngError::InvalidFontSize(0));
+        }
+
         let text_str = escape_str_pcdata(text.as_ref()).into();
         let color_val =
             color.try_into().map_err(|_| TextToPngError::InvalidColor)?;
@@ -303,14 +331,18 @@ impl TextRenderer {
         let tree =
             Tree::from_str(content.as_str(), &self.render_options.to_ref())?;
 
-        let text_node = tree.node_by_id("t").unwrap();
-        let size = text_node.calculate_bbox().unwrap();
+        let text_node =
+            tree.node_by_id("t").ok_or(TextToPngError::InvalidInput)?;
+
+        let size = text_node
+            .calculate_bbox()
+            .ok_or(TextToPngError::InvalidInput)?;
 
         let mut pixmap = Pixmap::new(
             size.width().ceil() as u32,
             size.height().ceil() as u32,
         )
-        .expect("Should be able to create a pixmap");
+        .ok_or(TextToPngError::CouldNotCreateImageStorage)?;
 
         render_node(&tree, &text_node, FitTo::Original, pixmap.as_mut());
         let png_data = pixmap.encode_png()?;

@@ -1,6 +1,6 @@
 [package]
 name = "text-to-png"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 authors = ["Kevin Guthrie <kevin.guthrie@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -25,3 +25,8 @@ derive-new="0.5.9"
 siphasher="0.3.7"
 thiserror="1"
 png="0.17.2"
+
+[dev-dependencies]
+float-cmp="0.9.0"
+image = "0.20"
+lcs-image-diff = { version = "0.1", default-features = false }

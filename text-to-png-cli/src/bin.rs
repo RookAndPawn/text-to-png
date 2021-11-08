@@ -1,45 +1,4 @@
-//! # Text To Png Cli (txt2png)
-//!
-//! This crate provides a command-line application for rendering simple text to
-//! an image
-//!
-//! ## Usage
-//!
-//! This is a classic [clap](https://crates.io/crates/clap) app, you can see all
-//! the options with `-h`
-//!
-//! ```console
-//! kguthrie@home text-to-png % ./txt2png -h
-//! Text To Png Cli 0.1.0
-//! Kevin G. <kevin.guthrie@gmail.com>
-//! Renders text to a png with some options
-//!
-//! USAGE:
-//!     txt2png [OPTIONS] --output <file> [text]...
-//!
-//! FLAGS:
-//!     -h, --help       Prints help information
-//!     -V, --version    Prints version information
-//!
-//! OPTIONS:
-//!     -c, --color <color>            Color of the text: e.g. Brown, #45A2f4, 666 [default: Orange Red]
-//!     -o, --output <file>            Path of the file to write the rendered png
-//!     -s, --font-size <font-size>    Font height in pixels [default: 64]
-//!
-//! ARGS:
-//!     <text>...    All trailing arguments will be treated as the text to render
-//! ```
-//!
-//! To render text into a png file, run:
-//!
-//! ```console
-//! kguthrie@home text-to-png % ./txt2png -o text.png -c DarkTurquoise -s 64 Rénder this, brö
-//! ```
-//!
-//! And you'll get
-//!
-//! ![Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text.png?raw=true)
-//!
+#![doc = include_str!("../README.md")]
 #![warn(
     missing_docs,
     rust_2018_idioms,
@@ -50,8 +9,8 @@
 use clap::{App, AppSettings, Arg, ArgMatches};
 use std::{
     fs::File,
-    io::{BufWriter, Write},
-    path::PathBuf,
+    io::{BufReader, BufWriter, Read, Write},
+    path::{Path, PathBuf},
 };
 use text_to_png::{TextRenderer, TextToPngError};
 use thiserror::Error;
@@ -63,14 +22,26 @@ const OPT_FONT_SIZE: &str = "font-size";
 const OPT_TEXT: &str = "text";
 const OPT_COLOR: &str = "color";
 const OPT_FILE: &str = "file";
+const OPT_FONT_FILE: &str = "font-file";
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 enum TextToPngCliError {
+    #[error("Couldn't read font file {0} - {1}")]
+    FontFileReadError(String, #[source] std::io::Error),
+
+    #[error("No fonts were loadable from the given font file - {0}")]
+    InvalidFontFile(String),
+
     #[error("Couldn't interpret argument {arg_name:?}={arg_value:?}")]
     InvalidUserInput {
         arg_name: &'static str,
         arg_value: String,
     },
+
+    #[error("There was an unknown error while rendering text")]
+    UnexpectedError,
+
     #[error("Failure while rendering text to png - {0}")]
     ExecutionFailed(
         #[from]
@@ -88,7 +59,25 @@ enum TextToPngCliError {
 /// Render the text as described by the given command line arguments and present
 /// any errors back to the main caller for reporting back to the user
 fn render_png(matches: &ArgMatches<'_>) -> Result<(), TextToPngCliError> {
-    let renderer = TextRenderer::default();
+    let renderer = if let Some(font_file) = matches.value_of(OPT_FONT_FILE) {
+        let open_file = File::open(Path::new(font_file)).map_err(|e| {
+            TextToPngCliError::FontFileReadError(font_file.into(), e)
+        })?;
+
+        let mut ttf_font_data = Vec::new();
+
+        {
+            let mut reader = BufReader::new(open_file);
+            reader.read_to_end(&mut ttf_font_data).map_err(|e| {
+                TextToPngCliError::FontFileReadError(font_file.into(), e)
+            })?;
+        }
+
+        TextRenderer::try_new_with_ttf_font_data(ttf_font_data)
+            .map_err(|_| TextToPngCliError::InvalidFontFile(font_file.into()))?
+    } else {
+        TextRenderer::default()
+    };
 
     let font_size_str = matches
         .value_of(OPT_FONT_SIZE)
@@ -117,13 +106,24 @@ fn render_png(matches: &ArgMatches<'_>) -> Result<(), TextToPngCliError> {
 
     let result = renderer.render_text_to_png_data(to_render, font_size, color);
 
-    let png_data = if let Err(TextToPngError::InvalidColor) = &result {
-        Err(TextToPngCliError::InvalidUserInput {
-            arg_name: OPT_COLOR,
-            arg_value: color.into(),
-        })
-    } else {
-        result.map_err(|e| e.into())
+    let png_data = match result {
+        Err(TextToPngError::InvalidColor) => {
+            Err(TextToPngCliError::InvalidUserInput {
+                arg_name: OPT_COLOR,
+                arg_value: color.into(),
+            })
+        }
+        Err(TextToPngError::InvalidFontSize(size)) => {
+            Err(TextToPngCliError::InvalidUserInput {
+                arg_name: OPT_FONT_SIZE,
+                arg_value: format!("{}", size),
+            })
+        }
+        Err(TextToPngError::InvalidInput) => {
+            Err(TextToPngCliError::UnexpectedError)
+        }
+        Err(_) => result.map_err(|e| e.into()),
+        Ok(png_data) => Ok(png_data),
     }?;
 
     let output_path: PathBuf =
@@ -159,6 +159,11 @@ fn main() {
             .required(false)
             .help("Color of the text: e.g. Brown, #45A2f4, 666")
             .default_value(DEFAULT_COLOR))
+        .arg(Arg::with_name(OPT_FONT_FILE)
+            .short("f")
+            .long("font-file")
+            .takes_value(true)
+            .help("ttf or ttc font file to use"))
         .arg(Arg::with_name(OPT_FILE)
             .short("o")
             .long("output")
