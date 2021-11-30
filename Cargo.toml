@@ -4,3 +4,6 @@ members = [
     "text-to-png",
     "text-to-png-cli"
 ]
+
+[profile.bench]
+debug = true
