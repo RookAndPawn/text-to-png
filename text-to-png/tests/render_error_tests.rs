@@ -1,4 +1,4 @@
-use text_to_png::{TextRenderer, TextToPngError};
+use text_to_png::{FontSize, TextRenderer, TextToPngError};
 
 #[test]
 pub fn test_invalid_color() {
@@ -29,7 +29,24 @@ pub fn test_invalid_size() {
 
     assert!(matches!(
         tr.render_text_to_png_data("Hello", 0, 0),
-        Err(TextToPngError::InvalidFontSize(0))
+        Err(TextToPngError::InvalidFontSize)
+    ));
+}
+
+#[test]
+pub fn test_invalid_size_rect() {
+    let tr = TextRenderer::default();
+
+    assert!(matches!(
+        tr.render_text_to_png_data(
+            "Hello",
+            FontSize::FitRect {
+                width: 0.,
+                height: 100.
+            },
+            0
+        ),
+        Err(TextToPngError::InvalidFontSize)
     ));
 }
 

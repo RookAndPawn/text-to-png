@@ -29,7 +29,7 @@ pub fn test_default_renderer() {
 
     let diff = lcs_image_diff::compare(
         &mut expected_image,
-        &mut &mut actual_image,
+        &mut actual_image,
         100. / 256.,
     )
     .expect("Failed to compare actual and expected image");
@@ -66,7 +66,7 @@ pub fn test_renderer_with_ttf_font() {
 
     let diff = lcs_image_diff::compare(
         &mut expected_image,
-        &mut &mut actual_image,
+        &mut actual_image,
         100. / 256.,
     )
     .expect("Failed to compare actual and expected image");
@@ -103,7 +103,7 @@ pub fn test_renderer_with_ttf_font_collection() {
 
     let diff = lcs_image_diff::compare(
         &mut expected_image,
-        &mut &mut actual_image,
+        &mut actual_image,
         100. / 256.,
     )
     .expect("Failed to compare actual and expected image");

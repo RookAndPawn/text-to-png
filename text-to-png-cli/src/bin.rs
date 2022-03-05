@@ -113,10 +113,10 @@ fn render_png(matches: &ArgMatches<'_>) -> Result<(), TextToPngCliError> {
                 arg_value: color.into(),
             })
         }
-        Err(TextToPngError::InvalidFontSize(size)) => {
+        Err(TextToPngError::InvalidFontSize) => {
             Err(TextToPngCliError::InvalidUserInput {
                 arg_name: OPT_FONT_SIZE,
-                arg_value: format!("{}", size),
+                arg_value: font_size_str.into(),
             })
         }
         Err(TextToPngError::InvalidInput) => {
@@ -172,6 +172,7 @@ fn main() {
             .help("Path of the file to write the rendered png"))
         .arg(Arg::with_name(OPT_TEXT)
             .help("All trailing arguments will be treated as the text to render")
+            .required(true)
             .multiple(true))
         .get_matches();
 

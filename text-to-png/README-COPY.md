@@ -45,3 +45,7 @@ let text_png = renderer.render_text_to_png_data(
 Writing the `&[u8]` data returned in `text_png.data` to a `text.png` yields:
 
 ![Rendered Text Image](https://github.com/RookAndPawn/text-to-png/blob/main/readme-resources/text2.png?raw=true)
+
+### CLI
+
+See the [CLI Readme](https://github.com/RookAndPawn/text-to-png/blob/main/text-to-png-cli)

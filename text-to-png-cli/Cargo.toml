@@ -1,6 +1,6 @@
 [package]
 name = "text-to-png-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["Kevin Guthrie <kevin.guthrie@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ name = "txt2png"
 path = "src/bin.rs"
 
 [dependencies]
-text-to-png = { version = "0.1.1", path = "../text-to-png" }
+text-to-png = { version = "0.2.0", path = "../text-to-png" }
 eyre = "0.6.5"
 clap = "2.33.3"
 thiserror = "1.0.30"

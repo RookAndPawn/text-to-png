@@ -25,6 +25,8 @@ use xml::escape::escape_str_pcdata;
 const DEFAULT_FONT: &[u8] = include_bytes!("resources/CallingCode-Regular.ttf");
 const DEFAULT_FONT_NAME: &str = "Calling Code";
 
+const BASELINE_FONT_SIZE: f64 = 100.;
+
 lazy_static::lazy_static! {
     static ref DEFAULT_FONT_DB : Database = create_default_font_db();
 }
@@ -118,8 +120,8 @@ pub enum TextToPngError {
     InvalidColor,
 
     /// Error indicating the given font size was invalid
-    #[error("Invalid font size - {0}")]
-    InvalidFontSize(u32),
+    #[error("Invalid font size")]
+    InvalidFontSize,
 
     /// Error indicating the font data given did not contain a valid font
     #[error("No font was loaded from the given font data")]
@@ -233,6 +235,120 @@ impl From<u32> for Color {
     }
 }
 
+/// Enumeration of ways that the size of rendered text can be specified.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FontSize {
+    /// This sets the font size in pixels directly with the given float
+    Direct(f64),
+
+    /// This sets the font size dynamically by first producing the vectors for
+    /// the text at a known font size and scaling to match the given width
+    /// in pixels
+    FillWidth(f64),
+
+    /// This sets the font size dynamically by first producing the vectors for
+    /// the text at a known font size and scaling to match the given height in
+    /// pixels
+    FillHeight(f64),
+
+    /// This sets the font size dynamically by first producing vectors for the
+    /// text at a known font size and scaling to match either the height or
+    /// width of the given rect whichever is smaller
+    FitRect {
+        /// Width of the target rectangle to fit
+        width: f64,
+        /// Height of the target rectangle to fit
+        height: f64,
+    },
+}
+
+macro_rules! impl_font_size_from_primitive {
+    ($primitive:ty, $lower_bound:expr) => {
+        impl TryFrom<$primitive> for FontSize {
+            type Error = ();
+
+            /// Convert a $primitive into a direct font size. This will succeed
+            /// whenever the input value is positive
+            fn try_from(value: $primitive) -> Result<Self, Self::Error> {
+                if value > $lower_bound {
+                    Ok(FontSize::Direct(value as f64))
+                } else {
+                    Err(())
+                }
+            }
+        }
+    };
+}
+
+impl_font_size_from_primitive!(u8, 0);
+impl_font_size_from_primitive!(u16, 0);
+impl_font_size_from_primitive!(u32, 0);
+impl_font_size_from_primitive!(u64, 0);
+impl_font_size_from_primitive!(u128, 0);
+impl_font_size_from_primitive!(i8, 0);
+impl_font_size_from_primitive!(i16, 0);
+impl_font_size_from_primitive!(i32, 0);
+impl_font_size_from_primitive!(i64, 0);
+impl_font_size_from_primitive!(i128, 0);
+impl_font_size_from_primitive!(usize, 0);
+impl_font_size_from_primitive!(isize, 0);
+impl_font_size_from_primitive!(f32, 0.);
+impl_font_size_from_primitive!(f64, 0.);
+
+impl FontSize {
+    /// check to make sure the font size is valid
+    fn validate(&self) -> bool {
+        match self {
+            FontSize::Direct(value)
+            | FontSize::FillHeight(value)
+            | FontSize::FillWidth(value) => *value > 0.,
+            FontSize::FitRect { height, width } => *height > 0. && *width > 0.,
+        }
+    }
+
+    fn requires_calculation(&self) -> bool {
+        return matches!(
+            &self,
+            FontSize::FillHeight(_)
+                | FontSize::FillWidth(_)
+                | FontSize::FitRect { .. }
+        );
+    }
+
+    fn calculate_size(&self, baseline_box_opt: Option<PathBbox>) -> f64 {
+        match self {
+            FontSize::Direct(size) => *size,
+            FontSize::FillHeight(fill_size)
+            | FontSize::FillWidth(fill_size) => {
+                let baseline_box = baseline_box_opt
+                    .expect("Fill/Fit sizes will be provided baseline boxes");
+
+                if matches!(self, FontSize::FillHeight(_)) {
+                    fill_size / baseline_box.height() * BASELINE_FONT_SIZE
+                } else {
+                    fill_size / baseline_box.width() * BASELINE_FONT_SIZE
+                }
+            }
+            FontSize::FitRect { width, height } => {
+                let baseline_box = baseline_box_opt
+                    .expect("Fill/Fit sizes will be provided baseline boxes");
+
+                let text_ar = baseline_box.height() / baseline_box.width();
+                let target_ar = *height / *width;
+
+                // text aspect ratio bigger than the target means the limit is
+                // the height
+                if text_ar > target_ar {
+                    height / baseline_box.height() * BASELINE_FONT_SIZE
+                } else {
+                    width / baseline_box.width() * BASELINE_FONT_SIZE
+                }
+            }
+        }
+    }
+}
+
 impl TextRenderer {
     /// Create the default text renderer. This will provide a render that uses
     /// only the default font
@@ -292,23 +408,33 @@ impl TextRenderer {
     ///         "#FF00FF" // A good color for the job, "Magenta" would work too
     ///     );
     /// ```
-    pub fn render_text_to_png_data<T, C>(
+    pub fn render_text_to_png_data<T, C, S>(
         &self,
         text: T,
-        font_size_pixels: u32,
+        font_size_raw: S,
         color: C,
     ) -> Result<TextPng, TextToPngError>
     where
         T: AsRef<str>,
         C: TryInto<Color>,
+        S: TryInto<FontSize>,
     {
-        if font_size_pixels == 0 {
-            return Err(TextToPngError::InvalidFontSize(0));
-        }
+        let font_size: FontSize = font_size_raw
+            .try_into()
+            .ok()
+            .filter(FontSize::validate)
+            .ok_or(TextToPngError::InvalidFontSize)?;
 
-        let text_str = escape_str_pcdata(text.as_ref()).into();
+        let text_str: String = escape_str_pcdata(text.as_ref()).into();
         let color_val =
             color.try_into().map_err(|_| TextToPngError::InvalidColor)?;
+
+        let font_size_pixels =
+            font_size.calculate_size(if font_size.requires_calculation() {
+                Some(self.measure_text_private(&text_str, BASELINE_FONT_SIZE)?)
+            } else {
+                None
+            });
 
         self.render_text_to_png_data_private(
             text_str,
@@ -317,10 +443,33 @@ impl TextRenderer {
         )
     }
 
+    fn measure_text_private(
+        &self,
+        text: &str,
+        font_size: f64,
+    ) -> Result<PathBbox, TextToPngError> {
+        let content = format!(
+            include_str!("resources/template.svg"),
+            font_size, "#000000", text
+        );
+
+        let tree =
+            Tree::from_str(content.as_str(), &self.render_options.to_ref())?;
+
+        let text_node =
+            tree.node_by_id("t").ok_or(TextToPngError::InvalidInput)?;
+
+        let size = text_node
+            .calculate_bbox()
+            .ok_or(TextToPngError::InvalidInput)?;
+
+        Ok(size)
+    }
+
     fn render_text_to_png_data_private(
         &self,
         text: String,
-        font_size: u32,
+        font_size: f64,
         color: Color,
     ) -> Result<TextPng, TextToPngError> {
         let content = format!(
@@ -358,6 +507,7 @@ impl TextRenderer {
 #[cfg(test)]
 mod test {
     use super::*;
+    use float_cmp::assert_approx_eq;
 
     #[test]
     fn test_parse_3_hex_color() {
@@ -400,5 +550,88 @@ mod test {
         let png = r.render_text_to_png_data("7", 24, 0);
 
         assert!(png.is_ok());
+    }
+
+    macro_rules! test_font_size_from_primitive {
+        ($primitive:ty, $input:expr, $expected:expr) => {
+            if let Ok(FontSize::Direct(value)) =
+                ($input as $primitive).try_into()
+            {
+                assert_approx_eq!(f64, $expected, value);
+            } else {
+                panic!("Got unexpected enum branch from primitive");
+            }
+        };
+    }
+
+    #[test]
+    fn test_font_size_from_primitives() {
+        test_font_size_from_primitive!(f64, 234.56, 234.56);
+        test_font_size_from_primitive!(i32, 234, 234.);
+    }
+
+    #[test]
+    fn test_font_size_from_fill_height() {
+        assert_approx_eq!(
+            f64,
+            200.,
+            FontSize::FillHeight(100.)
+                .calculate_size(PathBbox::new(0., 0., 1., 50.))
+        );
+        assert_approx_eq!(
+            f64,
+            50.,
+            FontSize::FillHeight(100.)
+                .calculate_size(PathBbox::new(0., 0., 1., 200.))
+        );
+    }
+
+    #[test]
+    fn test_font_size_from_fill_width() {
+        assert_approx_eq!(
+            f64,
+            200.,
+            FontSize::FillWidth(100.)
+                .calculate_size(PathBbox::new(0., 0., 50., 1.))
+        );
+        assert_approx_eq!(
+            f64,
+            50.,
+            FontSize::FillWidth(100.)
+                .calculate_size(PathBbox::new(0., 0., 200., 1.))
+        );
+    }
+
+    #[test]
+    fn test_font_size_from_fit_rect() {
+        assert_approx_eq!(
+            f64,
+            100.,
+            FontSize::FitRect {
+                height: 100.,
+                width: 100.
+            }
+            .calculate_size(PathBbox::new(0., 0., 50., 100.))
+        );
+
+        assert_approx_eq!(
+            f64,
+            100.,
+            FontSize::FitRect {
+                height: 100.,
+                width: 100.
+            }
+            .calculate_size(PathBbox::new(0., 0., 100., 25.))
+        );
+
+        assert_approx_eq!(
+            f64,
+            200.,
+            FontSize::FitRect {
+                height: 100.,
+                width: 100.
+            }
+            .calculate_size(PathBbox::new(0., 0., 50., 25.))
+        );
     }
 }
