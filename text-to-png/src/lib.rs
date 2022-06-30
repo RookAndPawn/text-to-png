@@ -110,6 +110,20 @@ pub struct TextPng {
     pub baseline_down_from_top: f64,
 }
 
+/// Result of rendering text to a pixmap. This contains the pixmap as well
+/// as the the image metadata for pixel size and baseline location
+#[derive(Debug, Clone)]
+pub struct TextPixmap {
+    /// Pixmap
+    pub data: Pixmap,
+
+    /// Size of the image when rendered
+    pub size: Size,
+
+    /// Y location of the text baseline measuring down from the top
+    pub baseline_down_from_top: f64,
+}
+
 /// Error type returned on unsuccessful rendering calls
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -419,6 +433,38 @@ impl TextRenderer {
         C: TryInto<Color>,
         S: TryInto<FontSize>,
     {
+        let text_pixmap =
+            self.render_text_to_pixmap(text, font_size_raw, color)?;
+        Ok(TextPng {
+            baseline_down_from_top: text_pixmap.baseline_down_from_top,
+            size: text_pixmap.size,
+            data: text_pixmap.data.encode_png()?,
+        })
+    }
+
+    /// Render the given text to a pixmap with the given options.
+    /// ```
+    /// use text_to_png::TextRenderer;
+    ///
+    /// let renderer = TextRenderer::default();
+    /// let text_png = renderer
+    ///     .render_text_to_pixmap(
+    ///         "Any kind of text will do here", // It can be owned or borrowed
+    ///         42, // Font size in pixels here
+    ///         "#FF00FF" // A good color for the job, "Magenta" would work too
+    ///     );
+    /// ```
+    pub fn render_text_to_pixmap<T, C, S>(
+        &self,
+        text: T,
+        font_size_raw: S,
+        color: C,
+    ) -> Result<TextPixmap, TextToPngError>
+    where
+        T: AsRef<str>,
+        C: TryInto<Color>,
+        S: TryInto<FontSize>,
+    {
         let font_size: FontSize = font_size_raw
             .try_into()
             .ok()
@@ -436,7 +482,7 @@ impl TextRenderer {
                 None
             });
 
-        self.render_text_to_png_data_private(
+        self.render_text_to_pixmap_private(
             text_str,
             font_size_pixels,
             color_val,
@@ -466,12 +512,12 @@ impl TextRenderer {
         Ok(size)
     }
 
-    fn render_text_to_png_data_private(
+    fn render_text_to_pixmap_private(
         &self,
         text: String,
         font_size: f64,
         color: Color,
-    ) -> Result<TextPng, TextToPngError> {
+    ) -> Result<TextPixmap, TextToPngError> {
         let content = format!(
             include_str!("resources/template.svg"),
             font_size, color, text
@@ -494,12 +540,11 @@ impl TextRenderer {
         .ok_or(TextToPngError::CouldNotCreateImageStorage)?;
 
         render_node(&tree, &text_node, FitTo::Original, pixmap.as_mut());
-        let png_data = pixmap.encode_png()?;
 
-        Ok(TextPng {
+        Ok(TextPixmap {
             baseline_down_from_top: -size.y(),
             size: size.into(),
-            data: png_data,
+            data: pixmap,
         })
     }
 }
