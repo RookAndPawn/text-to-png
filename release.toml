@@ -1,3 +1,5 @@
 
-
-pre-release-hook = ["git", "cliff", "--config", "$WORKSPACE/cliff.toml", "-o", "--tag", "{{version}}" ]
+# Configure git cliff to run on pre-release. 
+# It gets run for each crate in the workspaces which is why things are 
+# referencing the parent directory
+pre-release-hook = ["git", "cliff", "-r", "..", "-c", "../cliff.toml", "-o", "--tag", "{{version}}" ]
