@@ -1,21 +1,16 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+use rand::distr::{Alphanumeric, SampleString};
+use rand::rng;
 use text_to_png::*;
 
 const TEST_STR_LEN: usize = 30;
 
 #[allow(dead_code)]
 fn random_string() -> String {
-    let mut rng = thread_rng();
-
-    String::from_utf8(
-        std::iter::repeat(())
-            .map(|()| rng.sample(Alphanumeric))
-            .take(TEST_STR_LEN)
-            .collect(),
-    )
-    .expect("This should be valid characters")
+    let mut rng = rng();
+    Alphanumeric.sample_string(&mut rng, TEST_STR_LEN)
 }
 
 fn default_render_benchmark(c: &mut Criterion) {

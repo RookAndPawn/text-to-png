@@ -1,6 +1,6 @@
 [package]
 name = "text-to-png"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Kevin Guthrie <kevin.guthrie@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -15,23 +15,22 @@ name = "text_to_png"
 path = "src/lib.rs"
 
 [dependencies]
-lazy_static="1.4.0"
-fontdb="0.7.0"
-usvg="0.19.0"
-resvg={version = "0.19.0", default-features = false, features = ["text"] }
-tiny-skia="0.6.1"
-xml-rs="0.8.4"
-derive-new="0.5.9"
-siphasher="0.3.7"
-thiserror="1"
-png="0.17.2"
+fontdb="0.23.0"
+usvg="0.45.1"
+resvg={version = "0.45.1", default-features = false, features = ["text"] }
+tiny-skia="0.11.4"
+xml-rs="1.0.0"
+derive-new="0.7.0"
+siphasher="1.0.1"
+thiserror="2.0.17"
+png="0.17.6"
 
 [dev-dependencies]
-float-cmp="0.9.0"
-image = "0.20"
-lcs-image-diff = { version = "0.1", default-features = false }
-criterion = { version = "0.3", features = ["html_reports"] }
-rand = "0.8.4"
+float-cmp="0.10.0"
+image = "0.25.9"
+criterion = { version = "0.8.0", features = ["html_reports"] }
+rand = "0.9.2"
+image-compare = "0.5.0"
 
 [[bench]]
 name = "render_bench_100pt"

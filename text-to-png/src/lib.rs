@@ -14,12 +14,11 @@ use resvg::render_node;
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Display,
+    sync::{Arc, LazyLock},
 };
 use thiserror::Error;
 use tiny_skia::Pixmap;
-use usvg::{
-    Error as SvgError, FitTo, NodeExt, Options, PathBbox, TextRendering, Tree,
-};
+use usvg::{Error as SvgError, Options, Rect, TextRendering, Transform, Tree};
 use xml::escape::escape_str_pcdata;
 
 const DEFAULT_FONT: &[u8] = include_bytes!("resources/CallingCode-Regular.ttf");
@@ -27,16 +26,15 @@ const DEFAULT_FONT_NAME: &str = "Calling Code";
 
 const BASELINE_FONT_SIZE: f64 = 100.;
 
-lazy_static::lazy_static! {
-    static ref DEFAULT_FONT_DB : Database = create_default_font_db();
-}
+static DEFAULT_FONT_DB: LazyLock<Arc<Database>> =
+    LazyLock::new(create_default_font_db);
 
-fn create_default_font_db() -> Database {
+fn create_default_font_db() -> Arc<Database> {
     let mut result = Database::new();
 
     result.load_font_data(DEFAULT_FONT.to_vec());
 
-    result
+    Arc::new(result)
 }
 
 /// Parse a 1 or 2-digit slice of ascii characters into the u8 representation
@@ -74,8 +72,8 @@ pub struct Size {
     pub height: u32,
 }
 
-impl From<PathBbox> for Size {
-    fn from(pb: PathBbox) -> Self {
+impl From<Rect> for Size {
+    fn from(pb: Rect) -> Self {
         Size {
             width: pb.width().ceil() as u32,
             height: pb.height().ceil() as u32,
@@ -170,10 +168,7 @@ pub enum TextToPngError {
 
 impl Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{:02X?}{:02X?}{:02X?}",
-            self.r, self.g, self.b
-        ))
+        f.write_fmt(format_args!("{:02x}{:02x}{:02x}", self.r, self.g, self.b))
     }
 }
 
@@ -195,8 +190,7 @@ impl Color {
         // assume 3 digit hex color
         let chunk_size = if value.len() < 6 { 1 } else { 2 };
 
-        let mut chunks = value[start..]
-            .as_bytes()
+        let mut chunks = value.as_bytes()[start..]
             .chunks(chunk_size)
             .filter(|chunk| chunk.len() == chunk_size);
 
@@ -212,12 +206,12 @@ impl Color {
 /// contains the options that describe how text will be converted into vector
 /// paths. Currently we only support the default, embedded font, and we optimize
 /// for legibility
-#[derive(Debug, Clone)]
-pub struct TextRenderer {
-    render_options: Options,
+#[derive(Debug)]
+pub struct TextRenderer<'a> {
+    render_options: Options<'a>,
 }
 
-impl Default for TextRenderer {
+impl<'a> Default for TextRenderer<'a> {
     fn default() -> Self {
         Self::new()
     }
@@ -322,15 +316,15 @@ impl FontSize {
     }
 
     fn requires_calculation(&self) -> bool {
-        return matches!(
+        matches!(
             &self,
             FontSize::FillHeight(_)
                 | FontSize::FillWidth(_)
                 | FontSize::FitRect { .. }
-        );
+        )
     }
 
-    fn calculate_size(&self, baseline_box_opt: Option<PathBbox>) -> f64 {
+    fn calculate_size(&self, baseline_box_opt: Option<Rect>) -> f64 {
         match self {
             FontSize::Direct(size) => *size,
             FontSize::FillHeight(fill_size)
@@ -339,31 +333,33 @@ impl FontSize {
                     .expect("Fill/Fit sizes will be provided baseline boxes");
 
                 if matches!(self, FontSize::FillHeight(_)) {
-                    fill_size / baseline_box.height() * BASELINE_FONT_SIZE
+                    fill_size / baseline_box.height() as f64
+                        * BASELINE_FONT_SIZE
                 } else {
-                    fill_size / baseline_box.width() * BASELINE_FONT_SIZE
+                    fill_size / baseline_box.width() as f64 * BASELINE_FONT_SIZE
                 }
             }
             FontSize::FitRect { width, height } => {
                 let baseline_box = baseline_box_opt
                     .expect("Fill/Fit sizes will be provided baseline boxes");
 
-                let text_ar = baseline_box.height() / baseline_box.width();
+                let text_ar =
+                    (baseline_box.height() / baseline_box.width()) as f64;
                 let target_ar = *height / *width;
 
                 // text aspect ratio bigger than the target means the limit is
                 // the height
                 if text_ar > target_ar {
-                    height / baseline_box.height() * BASELINE_FONT_SIZE
+                    height / baseline_box.height() as f64 * BASELINE_FONT_SIZE
                 } else {
-                    width / baseline_box.width() * BASELINE_FONT_SIZE
+                    width / baseline_box.width() as f64 * BASELINE_FONT_SIZE
                 }
             }
         }
     }
 }
 
-impl TextRenderer {
+impl<'a> TextRenderer<'a> {
     /// Create the default text renderer. This will provide a render that uses
     /// only the default font
     pub fn new() -> Self {
@@ -394,20 +390,21 @@ impl TextRenderer {
 
         fonts.load_font_data(ttf_font_data.as_ref().to_vec());
 
-        fonts
+        let family = fonts
             .faces()
-            .first()
-            .map(|face| face.family.clone())
-            .map(move |family| Options {
-                fontdb: fonts,
+            .next()
+            .and_then(|face| face.families.first())
+            .map(|(family, _)| family.to_owned())
+            .ok_or(TextToPngError::NoFontFound)?;
+
+        Ok(TextRenderer {
+            render_options: Options {
+                fontdb: Arc::new(fonts),
                 text_rendering: TextRendering::OptimizeLegibility,
                 font_family: family,
                 ..Options::default()
-            })
-            .map(|options| TextRenderer {
-                render_options: options,
-            })
-            .ok_or(TextToPngError::NoFontFound)
+            },
+        })
     }
 
     /// Render the given text to a png with the given options.
@@ -493,21 +490,18 @@ impl TextRenderer {
         &self,
         text: &str,
         font_size: f64,
-    ) -> Result<PathBbox, TextToPngError> {
+    ) -> Result<Rect, TextToPngError> {
         let content = format!(
             include_str!("resources/template.svg"),
             font_size, "#000000", text
         );
 
-        let tree =
-            Tree::from_str(content.as_str(), &self.render_options.to_ref())?;
+        let tree = Tree::from_str(content.as_str(), &self.render_options)?;
 
         let text_node =
             tree.node_by_id("t").ok_or(TextToPngError::InvalidInput)?;
 
-        let size = text_node
-            .calculate_bbox()
-            .ok_or(TextToPngError::InvalidInput)?;
+        let size = text_node.abs_stroke_bounding_box();
 
         Ok(size)
     }
@@ -523,15 +517,12 @@ impl TextRenderer {
             font_size, color, text
         );
 
-        let tree =
-            Tree::from_str(content.as_str(), &self.render_options.to_ref())?;
+        let tree = Tree::from_str(content.as_str(), &self.render_options)?;
 
         let text_node =
             tree.node_by_id("t").ok_or(TextToPngError::InvalidInput)?;
 
-        let size = text_node
-            .calculate_bbox()
-            .ok_or(TextToPngError::InvalidInput)?;
+        let size = text_node.abs_stroke_bounding_box();
 
         let mut pixmap = Pixmap::new(
             size.width().ceil() as u32,
@@ -539,10 +530,22 @@ impl TextRenderer {
         )
         .ok_or(TextToPngError::CouldNotCreateImageStorage)?;
 
-        render_node(&tree, &text_node, FitTo::Original, pixmap.as_mut());
+        let layer_size = text_node.abs_bounding_box();
+
+        // This render function is hard coded to use the bounding box for the
+        // layer which is not tight around the text. To counteract this we need
+        // add the layer offset before subtract the stroke bounding box
+        render_node(
+            text_node,
+            Transform::from_translate(
+                layer_size.x() - size.x(),
+                layer_size.y() - size.y(),
+            ),
+            &mut pixmap.as_mut(),
+        );
 
         Ok(TextPixmap {
-            baseline_down_from_top: -size.y(),
+            baseline_down_from_top: -size.top() as f64,
             size: size.into(),
             data: pixmap,
         })
@@ -573,7 +576,7 @@ mod test {
 
     #[test]
     fn test_parse_u32_color() {
-        assert_eq!(Color::try_from(0x7A0EF9), Ok(Color::new(0x7A, 0xE, 0xF9)));
+        assert_eq!(Color::from(0x7A0EF9), Color::new(0x7A, 0xE, 0xF9));
     }
 
     #[test]
@@ -621,13 +624,13 @@ mod test {
             f64,
             200.,
             FontSize::FillHeight(100.)
-                .calculate_size(PathBbox::new(0., 0., 1., 50.))
+                .calculate_size(Rect::from_ltrb(0., 0., 1., 50.))
         );
         assert_approx_eq!(
             f64,
             50.,
             FontSize::FillHeight(100.)
-                .calculate_size(PathBbox::new(0., 0., 1., 200.))
+                .calculate_size(Rect::from_ltrb(0., 0., 1., 200.))
         );
     }
 
@@ -637,13 +640,13 @@ mod test {
             f64,
             200.,
             FontSize::FillWidth(100.)
-                .calculate_size(PathBbox::new(0., 0., 50., 1.))
+                .calculate_size(Rect::from_ltrb(0., 0., 50., 1.))
         );
         assert_approx_eq!(
             f64,
             50.,
             FontSize::FillWidth(100.)
-                .calculate_size(PathBbox::new(0., 0., 200., 1.))
+                .calculate_size(Rect::from_ltrb(0., 0., 200., 1.))
         );
     }
 
@@ -656,7 +659,7 @@ mod test {
                 height: 100.,
                 width: 100.
             }
-            .calculate_size(PathBbox::new(0., 0., 50., 100.))
+            .calculate_size(Rect::from_ltrb(0., 0., 50., 100.))
         );
 
         assert_approx_eq!(
@@ -666,7 +669,7 @@ mod test {
                 height: 100.,
                 width: 100.
             }
-            .calculate_size(PathBbox::new(0., 0., 100., 25.))
+            .calculate_size(Rect::from_ltrb(0., 0., 100., 25.))
         );
 
         assert_approx_eq!(
@@ -676,7 +679,7 @@ mod test {
                 height: 100.,
                 width: 100.
             }
-            .calculate_size(PathBbox::new(0., 0., 50., 25.))
+            .calculate_size(Rect::from_ltrb(0., 0., 50., 25.))
         );
     }
 }

@@ -1150,7 +1150,6 @@ pub(crate) fn from_str(text: &str) -> Option<Color> {
 //
 // https://github.com/sfackler/rust-phf
 
-use std::borrow::Borrow;
 use std::hash::Hasher;
 
 pub struct Map<V: 'static> {
@@ -1162,9 +1161,9 @@ pub struct Map<V: 'static> {
 impl<V> Map<V> {
     pub fn get(&self, key: &str) -> Option<&V> {
         let hash = hash(key, self.key);
-        let index = get_index(hash, &*self.disps, self.entries.len());
+        let index = get_index(hash, self.disps, self.entries.len());
         let entry = &self.entries[index as usize];
-        let b = entry.0.borrow();
+        let b = entry.0;
         if b == key {
             Some(&entry.1)
         } else {
